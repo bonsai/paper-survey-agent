@@ -1,55 +1,123 @@
 # Paper Survey Agent
 
-AIエージェントによる論文サーベイ自動化システム
+**LangGraph ベースの多エージェント論文サーベイ自動化システム**
 
-サーベイのプロセス（検索・選別・構造化・評価）は、まさにAIエージェントに自動化・支援させるのに最適な領域です。  
-論文サーベイを自作エージェント（またはAIツール）に任せる場合、役割ごとに以下のような構成でシステム化できます。
-
-## サーベイ・エージェントの基本構造（4つの役割）
+論文PDFを入力すると、以下の4つのエージェントが順次動作し、サーベイマトリクスと研究ギャップを自動生成します。
 
 ```
-[最新論文の入力]
+[最新論文のPDF入力]
        │
        ▼
- 1. 抽出エージェント（参考文献・従来技術の解析）
+ 1. Parser Agent      … Related Work / References 抽出 & 重要度判定
        │
        ▼
- 2. 追跡エージェント（Backward/Forward検索と取得）
+ 2. Crawler Agent     … Semantic Scholar で Backward / Forward 収集
        │
        ▼
- 3. 辞書・構造化エージェント（用語揺れの吸収・マトリクス作成）
+ 3. Ontology Agent    … 用語揺れ吸収 + サーベイマトリクス生成
        │
        ▼
- 4. ギャップ発見エージェント（未解決問題・論点の抽出）
+ 4. Gap Agent         … 未解決問題・対立点の抽出 + 統合候補の提案
 ```
 
-## 各エージェントの具体的な役割
+## 特徴
 
-### 1. 抽出エージェント（Parser Agent）
-- **役割**: 最新論文の PDF から「従来技術（Related Work）」や「参考文献（References）」セクションを抽出し、構造化データ（JSON等）に変換する。
-- **やる事**: 論文内で「特に重要視されている先行研究」がどれかを引用のされ方から判定する。
+- **LangGraph** による明確な状態管理とノードベースのパイプライン
+- Semantic Scholar API による引用グラフの自動拡張
+- 日本語・英語論文両対応（プロンプトは日本語中心）
+- サーベイマトリクスと研究ギャップを JSON + リッチCLI出力
 
-### 2. 追跡エージェント（Crawler Agent）
-- **役割**: 抽出された文献リストから、過去の重要論文（Backward）や、それをさらに引用している最新論文（Forward）を自動収集する。
-- **ツール連動**: Semantic Scholar API や Google Scholar、PubMed などのAPIと連携してメタデータやアブストラクトを自動取得する。
+## セットアップ
 
-### 3. 辞書・構造化エージェント（Ontology Agent）
-- **役割**: 文系研究で頻発する「同じ現象を指す異なる専門用語（表記揺れ）」を検知し、同一概念として統合する。
-- **出力**: 著者・年・研究対象・用いた理論・定義された用語を一覧にした「サーベイマトリクス（対比表）」を自動生成する。
+```bash
+# リポジトリをクローン
+git clone https://github.com/bonsai/paper-survey-agent.git
+cd paper-survey-agent
 
-### 4. ギャップ発見エージェント（Research Gap Agent）
-- **役割**: 集まった論文群の主張を比較し、「先行研究で共通して見落とされている点」や「議論が対立している部分」を整理する。
-- **出力**: 自分の研究をどこに「ガッチャンコ（統合・応用）」できるかの候補を提示する。
+# 仮想環境作成（推奨）
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-## 実装・運用のロードマップ
+# 依存関係インストール
+pip install -r requirements.txt
 
-- **プロトタイプ作成**: まずは Dify、Coze、Make などのノーコード/ローコードツールや、Python (LangGraph / CrewAI) で「論文PDFを入れると従来技術の引用文献リストと用語集を作ってくれるエージェント」を組む。
-- **既存ツールの導入検討**: 完全自作の前に、Consensus、Elicit、Litmaps、ResearchRabbit などの既存リサーチAIエージェントツールを組み合わせて評価する。
+# 環境変数設定
+cp .env.example .env
+# .env を編集して OPENAI_API_KEY を設定
+```
 
-## アプローチの選択肢
+### 必要なAPIキー
 
-- Pythonでの自作（LangGraph / CrewAI など）
-- ノーコードツールの利用（Dify、Coze、Make など）
-- 既存AIサービスの組み合わせ（Consensus、Elicit、Litmaps、ResearchRabbit など）
+| キー | 必須 | 説明 |
+|------|------|------|
+| `OPENAI_API_KEY` | ✅ | LLMエージェント用 |
+| `SEMANTIC_SCHOLAR_API_KEY` | 任意 | レート制限緩和（なくても動作） |
 
-どのようなアプローチでエージェント化を進めますか？
+## 使い方
+
+```bash
+# 基本実行
+python main.py path/to/your_paper.pdf
+
+# 出力先を指定
+python main.py path/to/your_paper.pdf -o ./my_outputs
+
+# 論文タイトルを明示的に指定（任意）
+python main.py path/to/your_paper.pdf --title "Paper Title Here"
+```
+
+実行後、`outputs/survey_<filename>.json` に詳細結果が保存され、ターミナルにはマトリクスとギャップがリッチ表示されます。
+
+## プロジェクト構成
+
+```
+paper-survey-agent/
+├── main.py                      # CLIエントリポイント
+├── requirements.txt
+├── .env.example
+├── src/survey_agent/
+│   ├── state.py                 # 共有State & Pydanticモデル
+│   ├── graph.py                 # LangGraph定義
+│   ├── agents/
+│   │   ├── parser.py            # 1. 抽出エージェント
+│   │   ├── crawler.py           # 2. 追跡エージェント
+│   │   ├── ontology.py          # 3. 辞書・構造化エージェント
+│   │   └── gap.py               # 4. ギャップ発見エージェント
+│   └── tools/
+│       ├── pdf_tools.py         # PDFテキスト抽出
+│       └── semantic_scholar.py  # Semantic Scholar API
+└── outputs/                     # 実行結果（gitignored）
+```
+
+## 各エージェントの詳細
+
+### 1. Parser Agent
+- PDFから Related Work / References セクションをヒューリスティック抽出
+- LLMで重要引用をスコアリング（importance_score）
+
+### 2. Crawler Agent
+- 重要論文を Semantic Scholar で検索・マッチング
+- Backward（参考文献）と Forward（被引用）を自動収集
+- メタデータ（abstract, citationCount など）をEnrich
+
+### 3. Ontology Agent
+- 用語の揺れを検知し canonical_term + aliases で正規化
+- サーベイマトリクス（研究対象・理論・主張・手法・限界）を生成
+
+### 4. Gap Agent
+- マトリクスを比較して missing / conflict / underexplored / methodological ギャップを抽出
+- 「自分の研究をどこにガッチャンコできるか」の提案付き
+- 最終的なサーベイナラティブ（synthesis）を生成
+
+## 今後の拡張アイデア
+
+- [ ] 条件分岐・並列実行（重要論文が多い場合の分割処理）
+- [ ] 人間のフィードバックループ（Human-in-the-loop）
+- [ ] ベクトルDBによる過去サーベイの蓄積・再利用
+- [ ] arXiv / Crossref / OpenAlex など他APIの追加
+- [ ] Streamlit / Gradio によるWeb UI
+- [ ] ローカルLLM（Ollama）対応
+
+## ライセンス
+
+MIT
